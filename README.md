@@ -2,7 +2,7 @@
 Extending DreamerV3 for robotic application and better Morphology awareness by implementing a FFKSM
 =======
 ## Details
-You can find a detailed description of the project under additionalMaterials/Embla.pdf.
+A detailed description of the project is provided at additionalMaterials/Embla.pdf.
 
 ## Usage
 
