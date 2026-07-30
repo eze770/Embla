@@ -2,10 +2,6 @@
 Extending DreamerV3 for robotic application and better Morphology awareness by implementing a FFKSM
 =======
 
-## Projectplan
-
-[miroboard](https://miro.com/welcomeonboard/cEVObU1TdjYyeTBRMjM0SEZubXFGaFFGdXB0WUwzYjRoc3pRRURXRnZ6T3ZmY3g3MUNiL3NTV2R5UktOMm1EcFJ1eGkzRlByQk16UFMxNUlBYUkvM0crSjRXTWUxclYzT3UxSXN4V1lDVjBIM2RxWnRFT1JGamNqUVdIK0lpQ3ZyVmtkMG5hNDA3dVlncnBvRVB2ZXBnPT0hdjE=?share_link_id=935135186188)
-
 ## Usage
 
 - install requirements (note that you need torch with cuda)
@@ -16,7 +12,8 @@ Extending DreamerV3 for robotic application and better Morphology awareness by i
 ## Current state
 
 Core architecture done!
-Needs benchmark. Maybe implement SM student model
+Performing poorly.
+Needs adjustment or small redesign. Maybe implement SM student model
 
 ## Acknowledgements
 
