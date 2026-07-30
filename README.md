@@ -1,6 +1,8 @@
 # EmblaV1
 Extending DreamerV3 for robotic application and better Morphology awareness by implementing a FFKSM
 =======
+## Details
+You can find a detailed description of the project under additionalMaterials/Embla.pdf.
 
 ## Usage
 
@@ -11,9 +13,9 @@ Extending DreamerV3 for robotic application and better Morphology awareness by i
 
 ## Current state
 
-Core architecture done!
-Performing poorly.
-Needs adjustment or small redesign. Maybe implement SM student model
+- Core architecture done!
+- Performing poorly.
+- Needs adjustment or small redesign. Maybe implement SM student model.
 
 ## Acknowledgements
 
