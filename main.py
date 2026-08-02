@@ -32,13 +32,15 @@ def main(configFile):
     camMode = config.camMode
     smEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
     if camMode == 1:
-        wmEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name="ego_cam"), render_only=True), (64, 64))))
+        camName = "ego_cam"
     elif camMode == 2:
-        wmEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name="topdown_cam"), render_only=True), (64, 64))))
+        camName = "topdown_cam"
     else:
         wmEnv = None
+    if wmEnv:
+        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
 
-    observationShape, actionSize, actionLow, actionHigh, dt = getEnvProperties(wmEnv)
+    observationShape, actionSize, actionLow, actionHigh, dt = getEnvProperties(wmEnv if wmEnv else smEnv)
     print(f"envProperties: obs {observationShape}, action size {actionSize}, actionLow {actionLow}, actionHigh {actionHigh}, dt {dt}")
     damageDetected = 0
     smLatestLoss = 2.0
@@ -64,7 +66,7 @@ def main(configFile):
                     with torch.no_grad():
                         smLatentStates                      = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles)
                 two = time.time()
-                initialStates, worldModelMetrics            = dreamer.worldModelTraining(sampledData, smLatentStates *10)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
+                initialStates, worldModelMetrics            = dreamer.worldModelTraining(sampledData, smLatentStates * config.dreamer.smToWmRatio)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
                 three = time.time()
             if not warmup:  # Only start Actor training when SM training is finished, so that no wrong policy is learned, (eze)
                 behaviorMetrics                             = dreamer.behaviorTraining(initialStates)
@@ -86,9 +88,10 @@ def main(configFile):
             metricsBase = {"envSteps": dreamer.totalEnvSteps, "gradientSteps": dreamer.totalGradientSteps, "totalReward" : mostRecentScore}
             saveLossesToCSV(metricsFilename, metricsBase | worldModelMetrics | behaviorMetrics | smMetrics)
             plotMetrics(f"{metricsFilename}", savePath=f"{plotFilename}", title=f"{config.environmentName}")
-        wmEnv.close()
+        if wmEnv:
+            wmEnv.close()
+            wmEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
         smEnv.close()
-        wmEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name="wm_cam"), render_only=True), (64, 64))))
         smEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
 
 

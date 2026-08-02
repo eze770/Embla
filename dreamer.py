@@ -176,7 +176,7 @@ class Dreamer:
         tr = config.selfModel.tr  # training ratio
         batchSize = int(config.batchSize)
         batchLength = int(config.batchLength)
-        training_imges_snapshot = data.nextObservations.clone()
+        training_imges_snapshot = data.nextSmObservations.clone()
         training_angles_snapshot = data.angles.clone()
         height, width = training_imges_snapshot[0, 0].shape[1:]
         training_imges_snapshot = training_imges_snapshot.reshape(batchSize, batchLength, -1, height, width)
@@ -389,7 +389,7 @@ class Dreamer:
             action = torch.zeros(1, self.actionSize).to(self.device)
 
             smObservation = smEnv.reset(seed= (seed + self.totalEpisodes if seed else None))
-            wmObservation = wmEnv.reset(seed= (seed + self.totalEpisodes if seed else None)) if wmEnv != None else smObservation
+            wmObservation = wmEnv.reset(seed= (seed + self.totalEpisodes if seed else None)) if wmEnv else smObservation
 
             encodedObservation = self.encoder(torch.from_numpy(wmObservation).float().unsqueeze(0).to(self.device))
             angles = torch.as_tensor(smEnv.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32).unsqueeze(0)
@@ -405,10 +405,10 @@ class Dreamer:
                         sm_loss = torch.nn.functional.mse_loss(smPrediction, target_img)
                 #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debugging, (eze)
 
-                action          = self.actor(torch.cat((recurrentState, latentState, smLatentState), -1))
+                action          = self.actor(torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1))
                 actionNumpy     = action.cpu().numpy().reshape(-1)
 
-                if wmEnv != None:
+                if wmEnv:
                     nextWmObservation, reward, done = wmEnv.step(actionNumpy)
                     nextObservation, _, _ = smEnv.step(actionNumpy)
                 else:
@@ -419,7 +419,7 @@ class Dreamer:
                 angles = torch.as_tensor(smEnv.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # qpos from documentation, (eze)
                 vel = torch.as_tensor(smEnv.unwrapped.data.qvel.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # only used in Dreams, (eze)
                 if not evaluation:
-                    self.buffer.add(wmObservation, actionNumpy, reward, nextObservation, done, angles, vel)
+                    self.buffer.add(wmObservation, smObservation, actionNumpy, reward, nextWmObservation, nextObservation, done, angles, vel)
 
                 if saveVideo and i == 0:
                     frame = smEnv.render()

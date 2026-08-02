@@ -10,7 +10,9 @@ class ReplayBuffer(object):
         self.capacity = int(self.config.capacity)
 
         self.observations        = np.empty((self.capacity, *observation_shape), dtype=np.float32)
+        self.smObservations      = np.empty((self.capacity, *observation_shape), dtype=np.float32)
         self.nextObservations    = np.empty((self.capacity, *observation_shape), dtype=np.float32)
+        self.nextSmObservations  = np.empty((self.capacity, *observation_shape), dtype=np.float32)
         self.actions             = np.empty((self.capacity, actions_size), dtype=np.float32)
         self.rewards             = np.empty((self.capacity, 1), dtype=np.float32)
         self.dones               = np.empty((self.capacity, 1), dtype=np.float32)
@@ -23,14 +25,16 @@ class ReplayBuffer(object):
     def __len__(self):
         return self.capacity if self.full else self.bufferIndex
 
-    def add(self, observation, action, reward, nextObservation, done, angle, vel):
-        self.observations[self.bufferIndex]     = observation
-        self.actions[self.bufferIndex]          = action
-        self.rewards[self.bufferIndex]          = reward
-        self.nextObservations[self.bufferIndex] = nextObservation
-        self.dones[self.bufferIndex]            = done
-        self.angles[self.bufferIndex]           = angle.cpu()
-        self.vel[self.bufferIndex]              = vel.cpu()
+    def add(self, observation, smObservation, action, reward, nextObservation, nextSmObservation, done, angle, vel):
+        self.observations[self.bufferIndex]       = observation
+        self.smObservations[self.bufferIndex]     = smObservation
+        self.actions[self.bufferIndex]            = action
+        self.rewards[self.bufferIndex]            = reward
+        self.nextObservations[self.bufferIndex]   = nextObservation
+        self.nextSmObservations[self.bufferIndex] = nextSmObservation
+        self.dones[self.bufferIndex]              = done
+        self.angles[self.bufferIndex]             = angle.cpu()
+        self.vel[self.bufferIndex]                = vel.cpu()
 
         self.bufferIndex = (self.bufferIndex + 1) % self.capacity
         self.full = self.full or self.bufferIndex == 0
@@ -43,8 +47,10 @@ class ReplayBuffer(object):
 
         sampleIndex = (sampleIndex + sequenceLength) % self.capacity
 
-        observations      = torch.as_tensor(self.observations[sampleIndex], device=self.device).float()
+        observations        = torch.as_tensor(self.observations[sampleIndex], device=self.device).float()
+        smObservations      = torch.as_tensor(self.observations[sampleIndex], device=self.device).float()
         nextObservations    = torch.as_tensor(self.nextObservations[sampleIndex], device=self.device).float()
+        nextSmObservations  = torch.as_tensor(self.nextObservations[sampleIndex], device=self.device).float()
 
         actions  = torch.as_tensor(self.actions[sampleIndex], device=self.device)
         rewards  = torch.as_tensor(self.rewards[sampleIndex], device=self.device)
@@ -54,9 +60,11 @@ class ReplayBuffer(object):
 
         sample = attridict({
             "observations"      : observations,
+            "smObservations"    : smObservations,
             "actions"           : actions,
             "rewards"           : rewards,
             "nextObservations"  : nextObservations,
+            "nextSmObservations": nextSmObservations,
             "dones"             : dones,
             "angles"            : angles,
             "vel"               : vel})
