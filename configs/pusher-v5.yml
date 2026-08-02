@@ -18,7 +18,7 @@ numEvaluationEpisodes: 1
 maxEnvSteps: 400
 
 dreamer:
-    smToWmRatio: 1          # Scales the Sm Latents by the factor
+    smToWmRatio: 10          # Scales the Sm Latents by the factor
     smFreq: 4
 
     batchSize: 32
