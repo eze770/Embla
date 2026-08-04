@@ -60,7 +60,7 @@ def main(configFile):
             sampledData                          = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength, damageDetected)
             if i % config.dreamer.smFreq == 0:
                 if (config.dreamer.selfModel.nIters // ((config.dreamer.batchLength - 1) * config.dreamer.batchSize)) - (dreamer.totalGradientSteps - damageDetected) >= 0 or smLatestLoss > 1.0:
-                    smLatentStates, smLatestLoss, smMetrics = dreamer.selfModelTraining(sampledData)  # initialize SelfModel training, (eze)
+                    smLatentStates, smLatestLoss, smMetrics = dreamer.selfModelTraining(sampledData, config.resume)  # initialize SelfModel training, (eze)
                 else:
                     damageDetected = 0  # reset so that buffer uses all data for wm again, (eze)
                     with torch.no_grad():

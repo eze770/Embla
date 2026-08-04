@@ -127,7 +127,7 @@ class Dreamer:
         return fullStates.view(-1, self.fullStateSize).detach(), metrics
 
 
-    def selfModelTraining(self, data):
+    def selfModelTraining(self, data, resume):
         totalGradientSteps = self.totalGradientSteps
         config = self.configFile
         scaler = GradScaler()
@@ -202,7 +202,10 @@ class Dreamer:
         if totalGradientSteps == 0:
             pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
         else:
-            pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt' % (self.totalSelfModelSteps)
+            if resume:
+                pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
+            else:
+                pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt' % self.totalSelfModelSteps
             self.totalSelfModelSteps = (totalGradientSteps + 1) * config.batchSize * (config.batchLength - 1)
 
         for _ in range(n_restarts):
