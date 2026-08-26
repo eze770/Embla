@@ -7,7 +7,7 @@ import random
 import time
 import cv2
 
-from networks import RecurrentModel, PriorNet, PosteriorNet, RewardModel, ContinueModel, EncoderConv, DecoderConv, Actor, Critic
+from networks import RecurrentModel, PriorNet, PosteriorNet, RewardModel, ContinueModel, EncoderConv, DecoderConv, Actor, Critic, SmAuxiliaryDecoder
 from utils import computeLambdaValues, Moments
 from buffer import ReplayBuffer
 from func import *
@@ -32,10 +32,11 @@ class Dreamer:
         self.critic                            = Critic(self.fullStateSize,                                                                            config.critic         ).to(self.device)
         self.encoder                           = EncoderConv(observationShape, self.config.encodedObsSize,                                             config.encoder        ).to(self.device)
         self.decoder                           = DecoderConv(self.wmFullStateSize, observationShape,                                                   config.decoder        ).to(self.device)
-        self.recurrentModel                    = RecurrentModel(config.recurrentSize, self.latentSize, actionSize,                                     config.recurrentModel ).to(self.device)
+        self.recurrentModel                    = RecurrentModel(config.recurrentSize, self.latentSize + self.smLatentSize, actionSize,                 config.recurrentModel ).to(self.device)
         self.priorNet                          = PriorNet(config.recurrentSize, config.latentLength, config.latentClasses,                             config.priorNet       ).to(self.device)
         self.posteriorNet                      = PosteriorNet(config.recurrentSize + config.encodedObsSize, config.latentLength, config.latentClasses, config.posteriorNet   ).to(self.device)
         self.rewardPredictor                   = RewardModel(self.fullStateSize,                                                                       config.reward         ).to(self.device)
+        #self.smAuxDecoder                      = SmAuxiliaryDecoder(self.fullStateSize, self.smLatentSize                                                                    ).to(self.device)
 
         if config.useContinuationPrediction:
             self.continuePredictor  = ContinueModel(self.fullStateSize,                                                                                config.continuation   ).to(self.device)
@@ -62,10 +63,11 @@ class Dreamer:
         encodedObservations = self.encoder(data.observations.view(-1, *self.observationShape)).view(self.config.batchSize, self.config.batchLength, -1)
         previousRecurrentState  = torch.zeros(self.config.batchSize, self.recurrentSize,    device=self.device)
         previousLatentState     = torch.zeros(self.config.batchSize, self.latentSize,       device=self.device)
+        previousSmLatentState   = torch.zeros(self.config.batchSize, self.smLatentSize,       device=self.device)
 
         recurrentStates, priorsLogits, posteriors, posteriorsLogits = [], [], [], []
         for t in range(1, self.config.batchLength):
-            recurrentState              = self.recurrentModel(previousRecurrentState, previousLatentState, data.actions[:, t-1])
+            recurrentState              = self.recurrentModel(previousRecurrentState, previousLatentState, previousSmLatentState, data.actions[:, t-1])
             _, priorLogits              = self.priorNet(recurrentState)
             posterior, posteriorLogits  = self.posteriorNet(torch.cat((recurrentState, encodedObservations[:, t]), -1))
 
@@ -76,6 +78,7 @@ class Dreamer:
 
             previousRecurrentState = recurrentState
             previousLatentState    = posterior
+            previousSmLatentState  = smLatentStates[:, t-1, :]
 
         recurrentStates             = torch.stack(recurrentStates,              dim=1) # (batchSize, batchLength-1, recurrentSize)
         priorsLogits                = torch.stack(priorsLogits,                 dim=1) # (batchSize, batchLength-1, latentLength, latentClasses)
@@ -334,16 +337,22 @@ class Dreamer:
 
     def behaviorTraining(self, fullState):
         recurrentState, latentState, smLatentState = torch.split(fullState, (self.recurrentSize, self.latentSize, self.smLatentSize), -1)
-        fullStates, logprobs, entropies = [], [], []
+        fullStates, logprobs, entropies, auxLosses = [], [], [], []
         for _ in range(self.config.imaginationHorizon):
             action, logprob, entropy = self.actor(fullState.detach(), training=True)
-            recurrentState = self.recurrentModel(recurrentState, latentState, action)
+            recurrentState = self.recurrentModel(recurrentState, latentState, smLatentState, action)
             latentState, _ = self.priorNet(recurrentState)
 
             fullState = torch.cat((recurrentState, latentState, smLatentState), -1)
             fullStates.append(fullState)
             logprobs.append(logprob)
             entropies.append(entropy)
+
+        first_layer_weights = self.actor.network[0].weight  # (hidden_size, 800) first layer, compare sm to wm Impact (eze)
+        sm_weights = first_layer_weights[:, -32:]
+        wm_weights = first_layer_weights[:, :768]
+        print("\nSm: ", sm_weights.abs().mean())
+        print(", Wm: ", wm_weights.abs().mean(), ", Sm2: ")
 
         fullStates  = torch.stack(fullStates,    dim=1) # (batchSize*batchLength, imaginationHorizon, recurrentSize + latentLength*latentClasses)
         logprobs    = torch.stack(logprobs[1:],  dim=1) # (batchSize*batchLength, imaginationHorizon-1)
@@ -399,14 +408,14 @@ class Dreamer:
 
             currentScore, stepCount, done, frames = 0, 0, False, []
             while not done:
-                recurrentState                  = self.recurrentModel(recurrentState, latentState, action)
-                latentState, _                  = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
                 with torch.no_grad():
                     smLatentState, smPrediction = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles, envInteraction=True)
                     target_img = crop_center(torch.from_numpy(smObservation).unsqueeze(0)).mean(dim=-1 if smObservation.shape[-1] in (1, 3) else 1).to(device).reshape(1, -1)
                     with autocast("cuda"):
                         sm_loss = torch.nn.functional.mse_loss(smPrediction, target_img)
-                #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debugging, (eze)
+                #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debuging, (eze)
+                recurrentState                  = self.recurrentModel(recurrentState, latentState, smLatentState, action)
+                latentState, _                  = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
 
                 action          = self.actor(torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1))
                 actionNumpy     = action.cpu().numpy().reshape(-1)

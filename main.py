@@ -33,12 +33,12 @@ def main(configFile):
     smEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
     if camMode == 1:
         camName = "ego_cam"
+        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
     elif camMode == 2:
         camName = "topdown_cam"
+        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
     else:
         wmEnv = None
-    if wmEnv:
-        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
 
     observationShape, actionSize, actionLow, actionHigh, dt = getEnvProperties(wmEnv if wmEnv else smEnv)
     print(f"envProperties: obs {observationShape}, action size {actionSize}, actionLow {actionLow}, actionHigh {actionHigh}, dt {dt}")
@@ -88,10 +88,11 @@ def main(configFile):
             metricsBase = {"envSteps": dreamer.totalEnvSteps, "gradientSteps": dreamer.totalGradientSteps, "totalReward" : mostRecentScore}
             saveLossesToCSV(metricsFilename, metricsBase | worldModelMetrics | behaviorMetrics | smMetrics)
             plotMetrics(f"{metricsFilename}", savePath=f"{plotFilename}", title=f"{config.environmentName}")
+
+        smEnv.close()
         if wmEnv:
             wmEnv.close()
             wmEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
-        smEnv.close()
         smEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
 
 

@@ -16,8 +16,8 @@ class RecurrentModel(nn.Module):
         self.linear = nn.Linear(latentSize + actionSize, self.config.hiddenSize)
         self.recurrent = nn.GRUCell(self.config.hiddenSize, recurrentSize)
 
-    def forward(self, recurrentState, latentState, action):
-        return self.recurrent(self.activation(self.linear(torch.cat((latentState, action), -1))), recurrentState)
+    def forward(self, recurrentState, latentState, smLatentState, action):
+        return self.recurrent(self.activation(self.linear(torch.cat((latentState, action, smLatentState), -1))), recurrentState)
 
 
 class PriorNet(nn.Module):
@@ -121,6 +121,19 @@ class DecoderConv(nn.Module):
 
     def forward(self, x):
         return self.network(x)
+
+
+class SmAuxiliaryDecoder(nn.Module):
+    def __init__(self, fullStateSize, smLatentSize):
+        super().__init__()
+        self.sm_auxiliary_decoder = nn.Sequential(
+            nn.Linear(fullStateSize, 256),  # Fullstate size as Input
+            nn.ReLU(),
+            nn.Linear(256, smLatentSize)  # SM latent size as Output
+        )
+
+    def forward(self, x):
+        return self.sm_auxiliary_decoder(x)
 
 
 class Actor(nn.Module):

@@ -11,6 +11,8 @@ from torchvision.transforms import Resize
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 env = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=200, camera_name="topdown_cam"), render_only=True)
 env.reset()
+env2 = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=200, camera_name="topdown_cam"), render_only=True)
+env.reset()
 #env.render()
 
 #renderer = env.unwrapped.mujoco_renderer

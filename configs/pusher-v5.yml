@@ -1,5 +1,5 @@
 environmentName: Pusher-v5
-runName: 100Ratio0
+runName: EmblaDualCamRun7
 seed: 1
 robotID: 1
 
@@ -10,7 +10,7 @@ saveMetrics: True        # Saves metrics at replayRatio interval
 saveCheckpoints: True
 checkpointInterval: 2000
 resume: False
-checkpointToLoad: 26k
+checkpointToLoad: 6k
 
 episodesBeforeStart: 10
 numInteractionEpisodes: 1
@@ -18,7 +18,7 @@ numEvaluationEpisodes: 1
 maxEnvSteps: 400
 
 dreamer:
-    smToWmRatio: 100          # Scales the Sm Latents by the factor
+    smToWmRatio: 1          # Scales the Sm Latents by the factor
     smFreq: 4
 
     batchSize: 32
