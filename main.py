@@ -16,6 +16,7 @@ print("device: ", device)
 
 
 def main(configFile):
+    threads = []
     config = loadConfig(configFile)
     seedEverything(config.seed)
 
@@ -30,13 +31,13 @@ def main(configFile):
     os.makedirs(videoFilenameBase, exist_ok=True)
 
     camMode = config.camMode
-    smEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
+    smEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, forward_reward_weight=0), render_only=True), (64, 64))))
     if camMode == 1:
         camName = "ego_cam"
-        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
+        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName, forward_reward_weight=0), render_only=True), (64, 64))))
     elif camMode == 2:
         camName = "topdown_cam"
-        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
+        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName, forward_reward_weight=0), render_only=True), (64, 64))))
     else:
         wmEnv = None
 
@@ -89,14 +90,14 @@ def main(configFile):
             saveLossesToCSV(metricsFilename, metricsBase | worldModelMetrics | behaviorMetrics | smMetrics)
             plotMetrics(f"{metricsFilename}", savePath=f"{plotFilename}", title=f"{config.environmentName}")
 
-        smEnv.close()
-        if wmEnv:
-            wmEnv.close()
-            wmEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
-        smEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
+        #smEnv.close()
+        #if wmEnv:
+        #    wmEnv.close()
+        #    wmEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps, camera_name=camName), render_only=True), (64, 64))))
+        #smEnv = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=config.maxEnvSteps), render_only=True), (64, 64))))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="pusher-v5.yml")
+    parser.add_argument("--config", type=str, default="emblaAnt.yml")
     main(parser.parse_args().config)

@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from torchvision.transforms import Resize
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-env = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=200, camera_name="topdown_cam"), render_only=True)
+env = AddRenderObservation(gym.make("Ant-v5", render_mode="rgb_array", max_episode_steps=200, camera_name="track"), render_only=True)
 env.reset()
 env2 = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=200, camera_name="topdown_cam"), render_only=True)
 env.reset()
@@ -33,10 +33,10 @@ observations = np.empty((1000, *observationShape), dtype=np.float32)
 idx = 0
 terminated, truncated = False, False
 while not terminated and not truncated:
-    action = np.random.uniform(-1.5, 2.0, size=7)
+    action = np.random.uniform(-1.5, 2.0, size=8)
     obs, reward, terminated, truncated, info = env.step(action)
     observations[idx] = obs
-    qpos = env.unwrapped.data.qpos.copy()[:7]
+    qpos = env.unwrapped.data.qpos.copy()[:8]
     qvel = env.unwrapped.data.qvel.copy()
     idx = idx + 1
     plt.imshow(obs)
@@ -81,13 +81,13 @@ print(maskedObs[1].shape)
 matplotlib.image.imsave("test_afterContours.png", maskedObs[1])
 #print(unfilteredObs[1, 240])
 #print(maskedObs[1, 240])
-"""
+
 with imageio.get_writer(finalFilename, fps=30) as video:
     maskedObs = torch.as_tensor(maskedObs)
     for ob in maskedObs:
         resize = Resize((32, 32))
         #ob = resize()
         matplotlib.image.imsave("test_32.png", ob)
-        #video.append_data(ob)"""
+        #video.append_data(ob)
 
 env.close()

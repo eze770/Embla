@@ -16,8 +16,8 @@ class RecurrentModel(nn.Module):
         self.linear = nn.Linear(latentSize + actionSize, self.config.hiddenSize)
         self.recurrent = nn.GRUCell(self.config.hiddenSize, recurrentSize)
 
-    def forward(self, recurrentState, latentState, smLatentState, action):
-        return self.recurrent(self.activation(self.linear(torch.cat((latentState, action, smLatentState), -1))), recurrentState)
+    def forward(self, recurrentState, latentState, action):
+        return self.recurrent(self.activation(self.linear(torch.cat((latentState, action), -1))), recurrentState)
 
 
 class PriorNet(nn.Module):

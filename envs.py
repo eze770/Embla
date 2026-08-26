@@ -13,6 +13,25 @@ def getEnvProperties(env):
     dt = timestep * frame_skip
     return observationShape, actionSize, actionLow, actionHigh, dt
 
+def in_energy_zone(env):
+    env = env.unwrapped
+    ant_pos = env.data.qpos[:2]
+    zone_pos = env.model.site("energy_zone_1").pos[:2]
+    distance = np.linalg.norm(ant_pos - zone_pos)
+    return distance < 0.5  # Radius der Zone
+
+
+def check_collision_with_obstacles(env):
+    env = env.unwrapped
+    obstacle_geom_ids = [env.model.geom("obstacle_1").id,
+                         env.model.geom("obstacle_2").id]
+
+    for i in range(env.data.ncon):
+        contact = env.data.contact[i]
+        if contact.geom1 in obstacle_geom_ids or contact.geom2 in obstacle_geom_ids:
+            return True
+    return False
+
 class GymPixelsProcessingWrapper(gym.ObservationWrapper):
     def __init__(self, env):
         super().__init__(env)
