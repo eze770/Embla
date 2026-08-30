@@ -1,4 +1,4 @@
-import matplotlib.pyplot as plt
+import queue
 import numpy
 from torch.distributions import kl_divergence, Independent, OneHotCategoricalStraightThrough, Normal
 import imageio
@@ -6,7 +6,6 @@ import matplotlib
 import matplotlib.image
 import random
 import time
-import cv2
 
 from networks import RecurrentModel, PriorNet, PosteriorNet, RewardModel, ContinueModel, EncoderConv, DecoderConv, Actor, Critic, SmAuxiliaryDecoder
 from utils import computeLambdaValues, Moments
@@ -23,6 +22,7 @@ class Dreamer:
         self.config             = config
         self.configFile         = configFile
         self.device             = device
+        self.frameQueue         = queue.Queue()
 
         self.recurrentSize  = config.recurrentSize
         self.latentSize     = config.latentLength*config.latentClasses
@@ -236,6 +236,8 @@ class Dreamer:
                 maskedImg = torch.zeros(config.batchSize, training_imges_snapshot.shape[3], training_imges_snapshot.shape[4], device=device, dtype=torch.float32)
                 for j in range(len(imges)):
                     maskedImg[j] = color_filter(config, imges[j])
+                img = maskedImg[0].cpu().numpy()
+                #matplotlib.image.imsave(LOG_PATH + '/image/' + "test.png", img, cmap='gray')
                 target_img = crop_center(maskedImg)  # also downscales, (eze)
                 target_img = target_img.reshape([batchSize, -1])
 
@@ -396,7 +398,7 @@ class Dreamer:
 
 
     @torch.no_grad()
-    def environmentInteraction(self, wmEnv, smEnv, numEpisodes, seed=None, evaluation=False, saveVideo=False, filename="videos/unnamedVideo", fps=30, macroBlockSize=16):
+    def environmentInteraction(self, wmEnv, smEnv, numEpisodes, seed=None, evaluation=False, saveVideo=False, liveView=False, filename="videos/unnamedVideo", fps=30, macroBlockSize=16):
         scores = []
         overalMovement = 0
         overalMovements = numpy.zeros(8)
@@ -438,24 +440,25 @@ class Dreamer:
                     energy += 50
                 else:
                     energy -= 1
-                if envs.check_collision_with_obstacles(envtype):
-                    reward -= 1
+                #if envs.check_collision_with_obstacles(envtype):  # already present in the standard ant reward function (eze)
+                #    reward -= 1
                 if energy == 0:
                     done = True
-                reward -= (1000 - energy) * 0.005
+                reward -= abs((800 - energy) * 0.005)  # small penalty for too much or too little energy (eze)
 
                 l = 0
-                for i in actionNumpy:  # Penalty for using one part too often (eze)
-                    overalMovement += abs(i)
-                    overalMovements[l] += abs(i)
+                for j in actionNumpy:  # Penalty for using one part too often (eze)
+                    overalMovement += abs(j)
+                    overalMovements[l] += abs(j)
                     if overalMovements[l] >= overalMovement * 0.2:
-                        reward -= abs(i)
+                        reward -= abs(j)
                     l += 1
 
-                _, x, y, _ = wmEnv.unwrapped.data.qpos[3:7]  # (w, x, y, z) (eze)
+                # Penalty for bad Vision/ too much angle of central body-part (eze)
+                _, x, y, _ = envtype.unwrapped.data.qpos[3:7]  # (w, x, y, z) (eze)
                 up_z = 1 - 2 * (x ** 2 + y ** 2)
-                if not 0.5 >= up_z >= -0.5:
-                    reward -= abs(up_z * 0.75)
+                if not up_z < 0.5:
+                    reward -= abs(up_z * 2)
 
                 print(reward)
                 angles = torch.as_tensor(smEnv.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # qpos from documentation, (eze)
@@ -468,6 +471,11 @@ class Dreamer:
                     targetHeight = (frame.shape[0] + macroBlockSize - 1)//macroBlockSize*macroBlockSize # getting rid of imagio warning
                     targetWidth = (frame.shape[1] + macroBlockSize - 1)//macroBlockSize*macroBlockSize
                     frames.append(np.pad(frame, ((0, targetHeight - frame.shape[0]), (0, targetWidth - frame.shape[1]), (0, 0)), mode='edge'))
+
+                if liveView and i == 0:
+                    frame = smEnv.render()
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    self.frameQueue.put(frame_bgr)
 
                 encodedObservation = self.encoder(torch.from_numpy(nextWmObservation).float().unsqueeze(0).to(self.device))
                 angles = angles.unsqueeze(0)

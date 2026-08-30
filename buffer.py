@@ -50,7 +50,7 @@ class ReplayBuffer(object):
         observations        = torch.as_tensor(self.observations[sampleIndex], device=self.device).float()
         smObservations      = torch.as_tensor(self.observations[sampleIndex], device=self.device).float()
         nextObservations    = torch.as_tensor(self.nextObservations[sampleIndex], device=self.device).float()
-        nextSmObservations  = torch.as_tensor(self.nextObservations[sampleIndex], device=self.device).float()
+        nextSmObservations  = torch.as_tensor(self.nextSmObservations[sampleIndex], device=self.device).float()
 
         actions  = torch.as_tensor(self.actions[sampleIndex], device=self.device)
         rewards  = torch.as_tensor(self.rewards[sampleIndex], device=self.device)

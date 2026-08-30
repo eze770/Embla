@@ -1,5 +1,5 @@
 environmentName: Ant-v5
-runName: SurvivalInstinctRun2
+runName: SurvivalInstinctRun9
 seed: 1
 robotID: 1
 
@@ -12,10 +12,10 @@ checkpointInterval: 2000
 resume: False
 checkpointToLoad: 6k
 
-episodesBeforeStart: 10
+episodesBeforeStart: 5
 numInteractionEpisodes: 1
 numEvaluationEpisodes: 1
-maxEnvSteps: 400
+maxEnvSteps: 1000
 
 dreamer:
     smToWmRatio: 1          # Scales the Sm Latents by the factor
@@ -118,3 +118,4 @@ folderNames:
     plotsFolder: plots
     checkpointsFolder: checkpoints
     videosFolder: videos
+    smLoss: smLoss

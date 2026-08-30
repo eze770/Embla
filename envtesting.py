@@ -7,13 +7,23 @@ import cv2
 import matplotlib.image
 import matplotlib.pyplot as plt
 from torchvision.transforms import Resize
+import threading
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-env = AddRenderObservation(gym.make("Ant-v5", render_mode="rgb_array", max_episode_steps=200, camera_name="track"), render_only=True)
+env = AddRenderObservation(gym.make("Ant-v5", render_mode="rgb_array", max_episode_steps=1000, camera_name="track"), render_only=True)
 env.reset()
 env2 = AddRenderObservation(gym.make("Pusher-v5", render_mode="rgb_array", max_episode_steps=200, camera_name="topdown_cam"), render_only=True)
 env.reset()
 #env.render()
+
+
+def bla():
+    while(True):
+        cv2.waitKey(30)
+
+
+th = threading.Thread(target=bla)
+th.start()
 
 #renderer = env.unwrapped.mujoco_renderer
 #cam = renderer.viewer.cam
@@ -39,13 +49,18 @@ while not terminated and not truncated:
     qpos = env.unwrapped.data.qpos.copy()[:8]
     qvel = env.unwrapped.data.qvel.copy()
     idx = idx + 1
-    plt.imshow(obs)
-    plt.show()
+    #plt.imshow(obs)
+    #plt.show()
 
     timestep = env.unwrapped.model.opt.timestep
     frame_skip = env.unwrapped.frame_skip
 
     dt = timestep * frame_skip
+
+    frame = env.render()
+    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    cv2.imshow("SM View", frame_bgr)
+    cv2.waitKey(1)
 
 #print("qpos: ", qpos, "qvel: ", qvel, "dt: ", dt, "reward: ", reward)
 

@@ -2,22 +2,26 @@
 
 # Extending DreamerV3 for robotic application and better Morphology awareness by implementing a FFKSM
 
+# EmblaV2
+
+# Using EmblaV1 with a biologically inspired intrinsic reward system
+
 ## Details
 
-A detailed description of the project is provided at additionalMaterials/DreamerFFKSM.pdf.
+A detailed description of EmblaV1 is provided at additionalMaterials/DreamerFFKSM.pdf.
 
 ## Usage
 
 * install requirements (note that you need torch with cuda)
-* replace pusher\_v5.xml in the gymnasium lib folder (yourPythonVenv/gymnasium/envs/mujoco/assets) with the file in this repo! (necessary for the colourfilter)
+* replace pusher_v5.xml or ant_v5.xml in the gymnasium lib folder (yourPythonVenv/gymnasium/envs/mujoco/assets) with the file in this repo! (necessary for the colourfilter)
 * run main.py to start
 * modify config to change all relevant Dreamer and FFKSM parameters
 
 ## Current state
 
-* Core architecture done!
-* Performing poorly.
-* Needs adjustment or small redesign. Maybe implement SM student model.
+* EmblaV1 done -> Result: DreamerV3 is already very good with limited vision, sm is redundant for EmblaV1
+* EmblaV2 has self-sustainability as a first intrinsic reward
+* needs testing
 
 ## Acknowledgements
 

@@ -1,5 +1,9 @@
+import time
+
 import numpy as np
-# from torchvision.utils import save_image
+from envs import GymPixelsProcessingWrapper, CleanGymWrapper
+import gymnasium as gym
+from gymnasium.wrappers import AddRenderObservation
 import matplotlib.pyplot as plt
 import os
 import torch
@@ -46,8 +50,8 @@ def color_filter(config, img):
     hsvImg = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     # lower = np.array([280, 0.3, 0.3], dtype=np.float32)
     # upper = np.array([340, 255, 255], dtype=np.float32)
-    lower = np.array([0, 0, 0], dtype=np.uint8)
-    upper = np.array([180, 255, 60], dtype=np.uint8)
+    lower = np.array([140, 80, 80], dtype=np.uint8)  # 0, 0, 0 for black (eze)
+    upper = np.array([170, 255, 255], dtype=np.uint8)  # 180, 255, 60 for black (eze)
     mask = cv2.inRange(hsvImg, lower, upper)
     kernel = np.ones((config.selfModel.filterSize, config.selfModel.filterSize),
                      np.uint8)  # filter 1 by 1 pixels, (eze)
@@ -579,10 +583,17 @@ def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_si
                        return_output=return_output)
     model.to(device)
     # Pretrained Model
+    a = True
     if pretrained_model_pth != None:
-        model.load_state_dict(torch.load(pretrained_model_pth, map_location=torch.device(device)))
-    # Optimizer
+        while(a):
+            try:  # Avoiding Multithreading issues (eze)
+                model.load_state_dict(torch.load(pretrained_model_pth, map_location=torch.device(device)))
+                a = False
+            except:
+                time.sleep(2)
+                a = True
 
+    # Optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     return model, optimizer
 
@@ -642,6 +653,21 @@ def selfmodelEvalForward(config, observationShape, data, initializeLatents=False
         else:
             outputs, latents = model_forward(config, rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=outputFlag)
             return latents, outputs['rgb_map']
+
+
+def init_envs(config):
+    camMode = config.camMode
+    smEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=None, camera_name="third_person", forward_reward_weight=0), render_only=True), (64, 64))))
+    if camMode == 1:
+        camName = "ego_cam"
+        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=None, camera_name=camName, forward_reward_weight=0), render_only=True), (64, 64))))
+    elif camMode == 2:
+        camName = "topdown_cam"
+        wmEnv         = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=None, camera_name=camName, forward_reward_weight=0), render_only=True), (64, 64))))
+    else:
+        wmEnv = None
+
+    return smEnv, wmEnv
 
 
 if __name__ == "__main__":
