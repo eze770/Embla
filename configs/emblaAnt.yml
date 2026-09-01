@@ -1,5 +1,5 @@
 environmentName: Ant-v5
-runName: SurvivalInstinctRun9
+runName: SurvivalInstinctRun12
 seed: 1
 robotID: 1
 
@@ -12,7 +12,7 @@ checkpointInterval: 2000
 resume: False
 checkpointToLoad: 6k
 
-episodesBeforeStart: 5
+episodesBeforeStart: 3
 numInteractionEpisodes: 1
 numEvaluationEpisodes: 1
 maxEnvSteps: 1000
@@ -112,6 +112,9 @@ dreamer:
         tr: 0.75
         patienceThreshold: 5
         filterSize: 1
+
+    envReward:
+        max_energy: 1000
 
 folderNames:
     metricsFolder: metrics

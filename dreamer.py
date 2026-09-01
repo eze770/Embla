@@ -1,5 +1,8 @@
 import queue
+import threading
+
 import numpy
+import torch
 from torch.distributions import kl_divergence, Independent, OneHotCategoricalStraightThrough, Normal
 import imageio
 import matplotlib
@@ -7,7 +10,7 @@ import matplotlib.image
 import random
 import time
 
-from networks import RecurrentModel, PriorNet, PosteriorNet, RewardModel, ContinueModel, EncoderConv, DecoderConv, Actor, Critic, SmAuxiliaryDecoder
+from networks import RecurrentModel, PriorNet, PosteriorNet, RewardModel, ContinueModel, EncoderConv, DecoderConv, Actor, Critic, FiLMLayer, SmAuxiliaryDecoder
 from utils import computeLambdaValues, Moments
 from buffer import ReplayBuffer
 import envs
@@ -38,6 +41,7 @@ class Dreamer:
         self.priorNet                          = PriorNet(config.recurrentSize, config.latentLength, config.latentClasses,                             config.priorNet       ).to(self.device)
         self.posteriorNet                      = PosteriorNet(config.recurrentSize + config.encodedObsSize, config.latentLength, config.latentClasses, config.posteriorNet   ).to(self.device)
         self.rewardPredictor                   = RewardModel(self.fullStateSize,                                                                       config.reward         ).to(self.device)
+        self.filmLayer                         = FiLMLayer(self.fullStateSize                                                                                                ).to(self.device)
         #self.smAuxDecoder                      = SmAuxiliaryDecoder(self.fullStateSize, self.smLatentSize                                                                    ).to(self.device)
 
         if config.useContinuationPrediction:
@@ -236,10 +240,10 @@ class Dreamer:
                 maskedImg = torch.zeros(config.batchSize, training_imges_snapshot.shape[3], training_imges_snapshot.shape[4], device=device, dtype=torch.float32)
                 for j in range(len(imges)):
                     maskedImg[j] = color_filter(config, imges[j])
-                img = maskedImg[0].cpu().numpy()
-                #matplotlib.image.imsave(LOG_PATH + '/image/' + "test.png", img, cmap='gray')
                 target_img = crop_center(maskedImg)  # also downscales, (eze)
+                img = target_img[0, 0].cpu().numpy()
                 target_img = target_img.reshape([batchSize, -1])
+                #matplotlib.image.imsave(LOG_PATH + '/image/' + "test.png", img, cmap='gray')
 
                 if t < train_amount:
                     model.train()
@@ -256,14 +260,16 @@ class Dreamer:
                     two = time.time()
                     # Backprop!
                     rgb_predicted = outputs['rgb_map']
-                    optimizer.zero_grad(set_to_none=True)
-                    with autocast("cuda"):
-                        loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
-                    scaler.scale(loss).backward()
-                    scaler.step(optimizer)
-                    scaler.update()
-                    loss_train = loss.item()
-                    three = time.time()
+                    modelLock = threading.Lock()
+                    with modelLock:
+                        optimizer.zero_grad(set_to_none=True)
+                        with autocast("cuda"):
+                            loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
+                        scaler.scale(loss).backward()
+                        scaler.step(optimizer)
+                        scaler.update()
+                        loss_train = loss.item()
+                        three = time.time()
 
                 else:
                     # Evaluate testing
@@ -289,7 +295,6 @@ class Dreamer:
                     valid_image.append(np_image[:6])
 
             loss_valid = np.mean(v_loss.item())
-
             #print("SM-Loss:", loss_valid, 'patience', patience)
             scheduler.step(loss_valid)
 
@@ -297,29 +302,32 @@ class Dreamer:
             np_image_combine = np.hstack(valid_image[0])
             np_image_combine = np.dstack((np_image_combine, np_image_combine, np_image_combine))
             np_image_combine = np.clip(np_image_combine, 0, 1)
-            matplotlib.image.imsave(LOG_PATH + '/image/' + 'latest.png', np_image_combine)
-            if Flag_save_image_during_training and totalGradientSteps % 50 == 0:  # note that it doesnt save every 50 steps bc it only trains every 4 steps, (eze)
-                matplotlib.image.imsave(
-                    LOG_PATH + '/image/' + '%d.png' % (self.totalSelfModelSteps),
-                    np_image_combine)
+            try:
+                matplotlib.image.imsave(LOG_PATH + '/image/' + 'latest.png', np_image_combine)
+                if Flag_save_image_during_training and totalGradientSteps % 50 == 0:  # note that it doesnt save every 50 steps bc it only trains every 4 steps, (eze)
+                    matplotlib.image.imsave(
+                        LOG_PATH + '/image/' + '%d.png' % (self.totalSelfModelSteps),
+                        np_image_combine)
 
-            record_file_train.write(str(loss_train) + "\n")
-            record_file_val.write(str(loss_valid) + "\n")
-            torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % (self.totalSelfModelSteps))
+                record_file_train.write(str(loss_train) + "\n")
+                record_file_val.write(str(loss_valid) + "\n")
+                torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % (self.totalSelfModelSteps))
 
-            if min_loss > loss_valid:
-                """record the best image and model"""
-                min_loss = loss_valid
-                matplotlib.image.imsave(LOG_PATH + '/image/' + 'best.png', np_image_combine)
-                torch.save(model.state_dict(), LOG_PATH + '/best_model/best_model.pt')
-                patience = 0
-                success = True
-            elif loss_valid == loss_v_last:
-                print("restart")
-                success = False
-            else:
-                patience += 1
-                success = True
+                if min_loss > loss_valid:
+                    """record the best image and model"""
+                    min_loss = loss_valid
+                    matplotlib.image.imsave(LOG_PATH + '/image/' + 'best.png', np_image_combine)
+                    torch.save(model.state_dict(), LOG_PATH + '/best_model/best_model.pt')
+                    patience = 0
+                    success = True
+                elif loss_valid == loss_v_last:
+                    print("restart")
+                    success = False
+                else:
+                    patience += 1
+                    success = True
+            except:
+                print("\nSelf-model store-exception!!\n")
 
             loss_v_last = loss_valid
             # os.makedirs(LOG_PATH + "epoch_%d_model" % i, exist_ok=True)
@@ -342,8 +350,11 @@ class Dreamer:
     def behaviorTraining(self, fullState):
         recurrentState, latentState, smLatentState = torch.split(fullState, (self.recurrentSize, self.latentSize, self.smLatentSize), -1)
         fullStates, logprobs, entropies, auxLosses = [], [], [], []
+        energy = torch.randint(0, 1000, (self.config.batchLength - 1, self.config.batchSize))
         for _ in range(self.config.imaginationHorizon):
+            #fullState = self.filmLayer(fullState, torch.tensor([energy/self.config.envReward.max_energy], device=self.device, dtype=torch.float32))
             action, logprob, entropy = self.actor(fullState.detach(), training=True)
+            energy = energy - 1
             recurrentState = self.recurrentModel(recurrentState, latentState, action)
             latentState, _ = self.priorNet(recurrentState)
 
@@ -352,11 +363,11 @@ class Dreamer:
             logprobs.append(logprob)
             entropies.append(entropy)
 
-        first_layer_weights = self.actor.network[0].weight  # (hidden_size, 800) first layer, compare sm to wm Impact (eze)
-        sm_weights = first_layer_weights[:, -32:]
-        wm_weights = first_layer_weights[:, :768]
-        print("\nSm: ", sm_weights.abs().mean())
-        print(", Wm: ", wm_weights.abs().mean(), ", Sm2: ")
+        #first_layer_weights = self.actor.network[0].weight  # (hidden_size, 800) first layer, compare sm to wm Impact (eze)
+        #sm_weights = first_layer_weights[:, -32:]
+        #wm_weights = first_layer_weights[:, :768]
+        #print("\nSm: ", sm_weights.abs().mean())
+        #print(", Wm: ", wm_weights.abs().mean())
 
         fullStates  = torch.stack(fullStates,    dim=1) # (batchSize*batchLength, imaginationHorizon, recurrentSize + latentLength*latentClasses)
         logprobs    = torch.stack(logprobs[1:],  dim=1) # (batchSize*batchLength, imaginationHorizon-1)
@@ -402,7 +413,6 @@ class Dreamer:
         scores = []
         overalMovement = 0
         overalMovements = numpy.zeros(8)
-        energy = 1000
         for i in range(numEpisodes):
             recurrentState, latentState = torch.zeros(1, self.recurrentSize, device=self.device), torch.zeros(1, self.latentSize, device=self.device)
             action = torch.zeros(1, self.actionSize).to(self.device)
@@ -413,18 +423,24 @@ class Dreamer:
             encodedObservation = self.encoder(torch.from_numpy(wmObservation).float().unsqueeze(0).to(self.device))
             angles = torch.as_tensor(smEnv.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32).unsqueeze(0)
 
+            maxEnergy = self.config.envReward.max_energy
+            energy = maxEnergy
             currentScore, stepCount, done, frames = 0, 0, False, []
+            modelLock = threading.Lock()
             while not done:
                 with torch.no_grad():
-                    smLatentState, smPrediction = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles, envInteraction=True)
-                    target_img = crop_center(torch.from_numpy(smObservation).unsqueeze(0)).mean(dim=-1 if smObservation.shape[-1] in (1, 3) else 1).to(device).reshape(1, -1)
+                    with modelLock:
+                        smLatentState, smPrediction = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles, envInteraction=True)
+                        target_img = crop_center(torch.from_numpy(smObservation).unsqueeze(0)).mean(dim=-1 if smObservation.shape[-1] in (1, 3) else 1).to(device).reshape(1, -1)
                     with autocast("cuda"):
                         sm_loss = torch.nn.functional.mse_loss(smPrediction, target_img)
                 #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debuging, (eze)
                 recurrentState                  = self.recurrentModel(recurrentState, latentState, action)
                 latentState, _                  = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
+                #modulatedState                  = self.filmLayer(torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1), torch.tensor([energy/maxEnergy], device=self.device, dtype=torch.float32))
+                modulatedState                  = torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1)
 
-                action          = self.actor(torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1))
+                action          = self.actor(modulatedState)
                 actionNumpy     = action.cpu().numpy().reshape(-1)
 
                 if wmEnv:
@@ -452,6 +468,7 @@ class Dreamer:
                     overalMovements[l] += abs(j)
                     if overalMovements[l] >= overalMovement * 0.2:
                         reward -= abs(j)
+                        movePenalty = abs(j)
                     l += 1
 
                 # Penalty for bad Vision/ too much angle of central body-part (eze)
@@ -459,8 +476,9 @@ class Dreamer:
                 up_z = 1 - 2 * (x ** 2 + y ** 2)
                 if not up_z < 0.5:
                     reward -= abs(up_z * 2)
+                    up_z_pen = up_z
 
-                print(reward)
+                print("Overall: ", reward, "   Energy: ", energy, "   MovementDist: ", movePenalty, "   Vision: ", up_z_pen)
                 angles = torch.as_tensor(smEnv.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # qpos from documentation, (eze)
                 vel = torch.as_tensor(smEnv.unwrapped.data.qvel.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # only used in Dreams, (eze)
                 if not evaluation:

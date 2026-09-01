@@ -1,10 +1,10 @@
 # EmblaV1
 
-# Extending DreamerV3 for robotic application and better Morphology awareness by implementing a FFKSM
+## Extending DreamerV3 for robotic application and better Morphology awareness by implementing a FFKSM
 
 # EmblaV2
 
-# Using EmblaV1 with a biologically inspired intrinsic reward system
+## Using EmblaV1 with a biologically inspired intrinsic reward system
 
 ## Details
 

@@ -175,6 +175,17 @@ class Critic(nn.Module):
         return Normal(mean.squeeze(-1), torch.exp(logStd).squeeze(-1)) # twohot loss in normal dreamer
 
 
+# scales and moves fullstates with energy
+class FiLMLayer(nn.Module):
+    def __init__(self, fullStateSize):
+        super().__init__()
+        self.gamma = nn.Linear(1, fullStateSize)
+        self.beta = nn.Linear(1, fullStateSize)
+
+    def forward(self, fullstate, energy):
+        return self.gamma(energy) * fullstate + self.beta(energy)
+
+
 # ----------------------------------------------------------------
 # From here on are models for SM, (eze)
 # ----------------------------------------------------------------
