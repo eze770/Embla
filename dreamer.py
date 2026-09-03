@@ -4,13 +4,14 @@ import threading
 import numpy
 import torch
 from torch.distributions import kl_divergence, Independent, OneHotCategoricalStraightThrough, Normal
+from torch.amp import GradScaler
 import imageio
 import matplotlib
 import matplotlib.image
 import random
 import time
 
-from networks import RecurrentModel, PriorNet, PosteriorNet, RewardModel, ContinueModel, EncoderConv, DecoderConv, Actor, Critic, FiLMLayer, SmAuxiliaryDecoder
+from networks import RecurrentModel, PriorNet, PosteriorNet, RewardModel, ContinueModel, EncoderConv, DecoderConv, Actor, Critic, FBV_SM, FiLMLayer, PositionalEncoder, SmAuxiliaryDecoder
 from utils import computeLambdaValues, Moments
 from buffer import ReplayBuffer
 import envs
@@ -41,8 +42,13 @@ class Dreamer:
         self.priorNet                          = PriorNet(config.recurrentSize, config.latentLength, config.latentClasses,                             config.priorNet       ).to(self.device)
         self.posteriorNet                      = PosteriorNet(config.recurrentSize + config.encodedObsSize, config.latentLength, config.latentClasses, config.posteriorNet   ).to(self.device)
         self.rewardPredictor                   = RewardModel(self.fullStateSize,                                                                       config.reward         ).to(self.device)
+        if config.selfModel.positionalEncoder:
+            encoder = PositionalEncoder(d_input=(config.selfModel.dof - 2) + 3, n_freqs=10, log_space=True                                                                   ).to(self.device)
+        else:
+            encoder = None
+        self.selfModel                         = FBV_SM(encoder=encoder, d_input=(config.selfModel.dof - 2) + 3, d_filter=config.selfModel.d_filter, output_size=2           ).to(self.device)
         self.filmLayer                         = FiLMLayer(self.fullStateSize                                                                                                ).to(self.device)
-        #self.smAuxDecoder                      = SmAuxiliaryDecoder(self.fullStateSize, self.smLatentSize                                                                    ).to(self.device)
+        #self.smAuxDecoder                     = SmAuxiliaryDecoder(self.fullStateSize, self.smLatentSize                                                                    ).to(self.device)
 
         if config.useContinuationPrediction:
             self.continuePredictor  = ContinueModel(self.fullStateSize,                                                                                config.continuation   ).to(self.device)
@@ -58,11 +64,13 @@ class Dreamer:
         self.worldModelOptimizer    = torch.optim.Adam(self.worldModelParameters,   lr=self.config.worldModelLR)
         self.actorOptimizer         = torch.optim.Adam(self.actor.parameters(),     lr=self.config.actorLR)
         self.criticOptimizer        = torch.optim.Adam(self.critic.parameters(),    lr=self.config.criticLR)
+        self.selfModelOptimizer     = torch.optim.Adam(self.selfModel.parameters(), lr=self.config.selfModelLR)
 
         self.totalEpisodes       = 0
         self.totalEnvSteps       = 0
         self.totalGradientSteps  = 0
         self.totalSelfModelSteps = config.batchSize * (config.batchLength - 1)
+        self.smMinLoss = np.inf
 
 
     def worldModelTraining(self, data, smLatentStates):
@@ -136,7 +144,7 @@ class Dreamer:
         return fullStates.view(-1, self.fullStateSize).detach(), metrics
 
 
-    def selfModelTraining(self, data, resume):
+    def selfModelTraining(self, data):
         totalGradientSteps = self.totalGradientSteps
         config = self.configFile
         scaler = GradScaler()
@@ -144,21 +152,16 @@ class Dreamer:
         arm_ee = config.dreamer.selfModel.arm_ee
         seed_num = config.seed
         robotid = config.robotID
-        FLAG_PositionalEncoder = config.dreamer.selfModel.positionalEncoder
 
         # 0:OM, 1:OneOut, 2: OneOut with distance
         different_arch = 0
-
         np.random.seed(seed_num)
         random.seed(seed_num)
         torch.manual_seed(seed_num)
         DOF = config.dreamer.selfModel.dof  # the number of motors  # dof4 apr03
-        cam_dist = config.dreamer.selfModel.camDist
-        nf_size = config.dreamer.selfModel.nfSize
-        near, far = cam_dist - nf_size, cam_dist + nf_size  # real scale dist=1.0
         Flag_save_image_during_training = True
 
-        if FLAG_PositionalEncoder:
+        if config.dreamer.selfModel.positionalEncoder:
             add_name = 'PE'
         else:
             add_name = 'no_PE'
@@ -167,7 +170,6 @@ class Dreamer:
         if different_arch != 0:
            LOG_PATH += 'diff_out_%d' % different_arch
         os.makedirs(LOG_PATH + "/image/", exist_ok=True)
-        os.makedirs(LOG_PATH + "/best_model/", exist_ok=True)
 
         # Encoders
         """arm dof = 2+3; arm dof=3+3"""
@@ -179,9 +181,6 @@ class Dreamer:
         perturb_hierarchical = False  # If set, applies noise to sample positions  # again no use found, (eze)
 
         # Training
-        Camera_FOV = 45.
-        camera_angle_y = Camera_FOV * np.pi / 180.
-        focal = 0.5 * 64 / np.tan(0.5 * camera_angle_y)
         tr = config.selfModel.tr  # training ratio
         batchSize = int(config.batchSize)
         batchLength = int(config.batchLength)
@@ -193,9 +192,7 @@ class Dreamer:
         train_amount = int((batchLength - 1) * tr)
         loss_v_last = np.inf
         patience = 0
-        min_loss = np.inf
-        rays_o, rays_d = get_rays(int(0.25 * height), int(0.25 * width), focal)
-        chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
+        min_loss = self.smMinLoss
 
         # Early Stopping
         warmup_iters = 400  # Number of iterations during warmup phase
@@ -208,25 +205,12 @@ class Dreamer:
 
         # pretrained_model_pth = 'train_log/real_train_1_log0928_%ddof_100(0)/best_model/'%num_data
         # pretrained_model_pth = 'train_log/real_id1_10000(1)_PE(arm)/best_model/'
-        if totalGradientSteps == 0:
-            pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
-        else:
-            if resume:
-                pretrained_model_pth = LOG_PATH + '/best_model/best_model.pt'
-            else:
-                pretrained_model_pth = LOG_PATH + '/best_model/model_epoch%d.pt' % self.totalSelfModelSteps
-            self.totalSelfModelSteps = (totalGradientSteps + 1) * config.batchSize * (config.batchLength - 1)
+        self.totalSelfModelSteps = (totalGradientSteps + 1) * config.batchSize * (config.batchLength - 1)
 
         for _ in range(n_restarts):
+            model = self.selfModel
+            optimizer = self.selfModelOptimizer
 
-            model, optimizer = init_models(d_input=(DOF - 2) + 3,  # DOF + 3 -> xyz and angle2 or 3 -> xyz
-                                           d_filter=config.selfModel.d_filter,
-                                           output_size=2,
-                                           lr=5e-4,  # 5e-4
-                                           pretrained_model_pth=pretrained_model_pth,
-                                           FLAG_PositionalEncoder=FLAG_PositionalEncoder,
-                                           return_output=True
-                                           )
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=20, verbose=True)
             latents = torch.zeros(batchSize, batchLength - 1, config.selfModel.d_filter // 4,
                                   device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
@@ -241,25 +225,29 @@ class Dreamer:
                 for j in range(len(imges)):
                     maskedImg[j] = color_filter(config, imges[j])
                 target_img = crop_center(maskedImg)  # also downscales, (eze)
-                img = target_img[0, 0].cpu().numpy()
+                #img = target_img[0, 0].cpu().numpy()
                 target_img = target_img.reshape([batchSize, -1])
                 #matplotlib.image.imsave(LOG_PATH + '/image/' + "test.png", img, cmap='gray')
 
                 if t < train_amount:
                     model.train()
+                    train = True
+                else:
+                    model.eval()
+                    train = False
 
-                    # Run one iteration of TinyNeRF and get the rendered RGB image.
-                    with autocast("cuda"):
-                        outputs, latents[:, t] = model_forward(config, rays_o, rays_d,
-                                                               near, far, model,
-                                                               chunksize=chunksize,
-                                                               arm_angle=angles,
-                                                               DOF=DOF,
-                                                               output_flag=different_arch,
-                                                               n_samples=config.selfModel.nSamples)
-                    two = time.time()
+                # Run one iteration of TinyNeRF and get the rendered RGB image.
+                with autocast("cuda"):
+                    latents, outputs = self_model_forward(config=self.configFile,
+                                                                model=model,
+                                                                arm_angle=angles,
+                                                                output_flag=different_arch,
+                                                                observation_shape=self.observationShape)
+                two = time.time()
+                print(latents.shape)
+                rgb_predicted = outputs['rgb_map']
+                if train:
                     # Backprop!
-                    rgb_predicted = outputs['rgb_map']
                     modelLock = threading.Lock()
                     with modelLock:
                         optimizer.zero_grad(set_to_none=True)
@@ -270,28 +258,16 @@ class Dreamer:
                         scaler.update()
                         loss_train = loss.item()
                         three = time.time()
-
                 else:
                     # Evaluate testing
-                    model.eval()
                     torch.no_grad()
                     valid_psnr = []
                     valid_image = []
 
-                    # Run one iteration of TinyNeRF and get the rendered RGB image.
                     with autocast("cuda"):
-                        outputs, latents[:, t] = model_forward(config, rays_o, rays_d,
-                                                               near, far, model,
-                                                               chunksize=chunksize,
-                                                               arm_angle=angles,
-                                                               DOF=DOF,
-                                                               output_flag=different_arch,
-                                                               n_samples=config.selfModel.nSamples)
-
-                    rgb_predicted = outputs['rgb_map']
-                    with autocast("cuda"):
-                        v_loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
-                    np_image = rgb_predicted.reshape([-1, int(height * 0.25), int(width * 0.25), 1]).detach().cpu().numpy()
+                       v_loss = torch.nn.functional.mse_loss(rgb_predicted, target_img)
+                    np_image = rgb_predicted.reshape(
+                        [-1, int(height * 0.25), int(width * 0.25), 1]).detach().cpu().numpy()
                     valid_image.append(np_image[:6])
 
             loss_valid = np.mean(v_loss.item())
@@ -311,13 +287,11 @@ class Dreamer:
 
                 record_file_train.write(str(loss_train) + "\n")
                 record_file_val.write(str(loss_valid) + "\n")
-                torch.save(model.state_dict(), LOG_PATH + '/best_model/model_epoch%d.pt' % (self.totalSelfModelSteps))
 
                 if min_loss > loss_valid:
                     """record the best image and model"""
                     min_loss = loss_valid
                     matplotlib.image.imsave(LOG_PATH + '/image/' + 'best.png', np_image_combine)
-                    torch.save(model.state_dict(), LOG_PATH + '/best_model/best_model.pt')
                     patience = 0
                     success = True
                 elif loss_valid == loss_v_last:
@@ -333,7 +307,7 @@ class Dreamer:
             # os.makedirs(LOG_PATH + "epoch_%d_model" % i, exist_ok=True)
             # torch.save(model.state_dict(), LOG_PATH + 'epoch_%d_model/nerf.pt' % i)
             # torch.cuda.empty_cache()    # to save memory
-            latents = latents.reshape(config.batchSize, (config.batchLength - 1), latents.shape[-1])
+            latents = latents.reshape(config.batchSize, config.batchLength - 1, latents.shape[-1])
             if patience > Patience_threshold:
                 break
             if success:
@@ -352,7 +326,7 @@ class Dreamer:
         fullStates, logprobs, entropies, auxLosses = [], [], [], []
         energy = torch.randint(0, 1000, (self.config.batchLength - 1, self.config.batchSize))
         for _ in range(self.config.imaginationHorizon):
-            #fullState = self.filmLayer(fullState, torch.tensor([energy/self.config.envReward.max_energy], device=self.device, dtype=torch.float32))
+            fullState = self.filmLayer(fullState, torch.tensor([energy/self.config.envReward.max_energy], device=self.device, dtype=torch.float32))
             action, logprob, entropy = self.actor(fullState.detach(), training=True)
             energy = energy - 1
             recurrentState = self.recurrentModel(recurrentState, latentState, action)
@@ -430,15 +404,15 @@ class Dreamer:
             while not done:
                 with torch.no_grad():
                     with modelLock:
-                        smLatentState, smPrediction = selfmodelEvalForward(config=self.configFile, observationShape=self.observationShape, data=angles, envInteraction=True)
+                        smLatentState, smPrediction = self_model_forward(config=self.configFile, model=self.selfModel.eval(), arm_angle=angles, output_flag=0, observation_shape=self.observationShape)
+                        smPrediction = smPrediction['rgb_map']
                         target_img = crop_center(torch.from_numpy(smObservation).unsqueeze(0)).mean(dim=-1 if smObservation.shape[-1] in (1, 3) else 1).to(device).reshape(1, -1)
                     with autocast("cuda"):
                         sm_loss = torch.nn.functional.mse_loss(smPrediction, target_img)
                 #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debuging, (eze)
                 recurrentState                  = self.recurrentModel(recurrentState, latentState, action)
                 latentState, _                  = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
-                #modulatedState                  = self.filmLayer(torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1), torch.tensor([energy/maxEnergy], device=self.device, dtype=torch.float32))
-                modulatedState                  = torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1)
+                modulatedState                  = self.filmLayer(torch.cat((recurrentState, latentState, smLatentState * self.config.smToWmRatio), -1), torch.tensor([energy/maxEnergy], device=self.device, dtype=torch.float32))
 
                 action          = self.actor(modulatedState)
                 actionNumpy     = action.cpu().numpy().reshape(-1)
@@ -529,9 +503,11 @@ class Dreamer:
             'rewardPredictor'       : self.rewardPredictor.state_dict(),
             'actor'                 : self.actor.state_dict(),
             'critic'                : self.critic.state_dict(),
+            'sefModel'              : self.selfModel.state_dict(),
             'worldModelOptimizer'   : self.worldModelOptimizer.state_dict(),
             'criticOptimizer'       : self.criticOptimizer.state_dict(),
             'actorOptimizer'        : self.actorOptimizer.state_dict(),
+            'selfModelOptimizer'    : self.selfModelOptimizer.state_dict(),
             'totalEpisodes'         : self.totalEpisodes,
             'totalEnvSteps'         : self.totalEnvSteps,
             'totalGradientSteps'    : self.totalGradientSteps,
@@ -556,9 +532,11 @@ class Dreamer:
         self.rewardPredictor.load_state_dict(checkpoint['rewardPredictor'])
         self.actor.load_state_dict(checkpoint['actor'])
         self.critic.load_state_dict(checkpoint['critic'])
+        self.selfModel.load_state_dict(checkpoint['selfModel'])
         self.worldModelOptimizer.load_state_dict(checkpoint['worldModelOptimizer'])
         self.criticOptimizer.load_state_dict(checkpoint['criticOptimizer'])
         self.actorOptimizer.load_state_dict(checkpoint['actorOptimizer'])
+        self.selfModelOptimizer.load_state_dict(checkpoint['selfModelOptimizer'])
         self.totalEpisodes = checkpoint['totalEpisodes']
         self.totalEnvSteps = checkpoint['totalEnvSteps']
         self.totalGradientSteps = checkpoint['totalGradientSteps']

@@ -34,6 +34,7 @@ dreamer:
     actorLR: 0.00004
     criticLR: 0.0001
     worldModelLR: 0.0002
+    selfModelLR: 0.0005 # 5e-4
     gradientNormType: 2
     gradientClip: 100
 
@@ -121,4 +122,6 @@ folderNames:
     plotsFolder: plots
     checkpointsFolder: checkpoints
     videosFolder: videos
+    crashFolder: crashLogs
     smLoss: smLoss
+

@@ -8,7 +8,7 @@ from dreamer    import Dreamer
 from utils      import loadConfig, seedEverything, plotMetrics
 from envs       import getEnvProperties, GymPixelsProcessingWrapper, CleanGymWrapper
 from utils      import saveLossesToCSV, ensureParentFolders
-from func import selfmodelEvalForward, init_envs
+from func import self_model_forward, init_envs
 import time
 import threading
 import queue
@@ -26,6 +26,9 @@ def main(configFile):
 
     runName                 = f"{config.environmentName}_{config.runName}"
     checkpointToLoad        = os.path.join(config.folderNames.checkpointsFolder, f"{runName}/{config.checkpointToLoad}")
+    crashFilenameBase       = config.folderNames.crashFolder
+    ensureParentFolders(crashFilenameBase)
+    os.makedirs(crashFilenameBase, exist_ok=True)
 
     # Only for getting the parameters. Env needs to be created in the thread that renders it (eze)
     smEnv, wmEnv = init_envs(config)
@@ -35,16 +38,17 @@ def main(configFile):
     dreamer = Dreamer(observationShape, actionSize, actionLow, actionHigh, dt, device, config.dreamer, config)
     if config.resume:
         dreamer.loadCheckpoint(checkpointToLoad)
-
-    selfmodelEvalForward(config=config, observationShape=observationShape, data=torch.as_tensor([0, 0, 0, 0, 0, 0, 0]), initializeLatents=True)  # save one random latent state for Dreamer start, (eze)
     dreamer.environmentInteraction(wmEnv, smEnv, config.episodesBeforeStart, seed=config.seed)  # gather first training-data (eze)
     smEnv.close()
     wmEnv.close()
 
-    threads = []
+    crash_log = open(os.path.join(crashFilenameBase, runName + ".txt"), mode="a", encoding="utf-8")
     train_t = threading.Thread(target=train, args=(config, dreamer, runName, observationShape))
     env_t = threading.Thread(target=envInteraction, args=(config, dreamer, runName))
-    train_t.start()
+    try:
+        train_t.start()
+    except Exception as e:
+        crash_log.write(e)
     env_t.start()
 
     while env_t.is_alive():
@@ -55,6 +59,7 @@ def main(configFile):
 
     train_t.join()
     env_t.join()
+    crash_log.close()
     print("\nTraining finished!")
 
 def envInteraction(config, dreamer, runName):
@@ -90,11 +95,11 @@ def train(config, dreamer, runName, observationShape):
             sampledData                          = dreamer.buffer.sample(dreamer.config.batchSize, dreamer.config.batchLength, damageDetected)
             if i % config.dreamer.smFreq == 0:
                 if (config.dreamer.selfModel.nIters // ((config.dreamer.batchLength - 1) * config.dreamer.batchSize)) - (dreamer.totalGradientSteps - damageDetected) >= 0 or smLatestLoss > 1.0:
-                    smLatentStates, smLatestLoss, smMetrics = dreamer.selfModelTraining(sampledData, config.resume)  # initialize SelfModel training, (eze)
+                    smLatentStates, smLatestLoss, smMetrics = dreamer.selfModelTraining(sampledData)  # initialize SelfModel training, (eze)
                 else:
                     damageDetected = 0  # reset so that buffer uses all data for wm again, (eze)
                     with torch.no_grad():
-                        smLatentStates                      = selfmodelEvalForward(config=config, observationShape=observationShape, data=sampledData.angles)
+                        smLatentStates                      = self_model_forward(config=config, model=dreamer.selfModel.eval(), arm_angle=sampledData.angles, output_flag=4, observation_shape=observationShape)
                 two = time.time()
                 initialStates, worldModelMetrics            = dreamer.worldModelTraining(sampledData, smLatentStates * config.dreamer.smToWmRatio)  # initial states also contains SM Latents (used for continuationpredictor), (eze)
                 three = time.time()

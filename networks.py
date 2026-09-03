@@ -233,13 +233,10 @@ class FBV_SM(nn.Module):
                  encoder=None,
                  d_input: int = 5,
                  d_filter: int = 128,
-                 output_size: int = 2,
-                 return_output=True):
+                 output_size: int = 2):
         super(FBV_SM, self).__init__()
 
         self.d_input = d_input
-        self.return_output = return_output
-
         self.act = nn.functional.relu
         self.encoder = encoder
 
@@ -288,8 +285,5 @@ class FBV_SM(nn.Module):
             x_cmd = self.cmd_encoder(x[:,3:])
             x = self.feed_forward(torch.cat((x_pos, x_cmd,x), dim=1))
 
-        if self.return_output:
-            return self.output(x), x.mean(dim=0, keepdim=True).detach()  # x = latent, (eze)
-        else:
-            return x.mean(dim=0, keepdim=True).detach()
+        return self.output(x), x.mean(dim=0, keepdim=True).detach()  # x = latent, (eze)
 

@@ -1,5 +1,3 @@
-import time
-
 import numpy as np
 from envs import GymPixelsProcessingWrapper, CleanGymWrapper
 import gymnasium as gym
@@ -9,9 +7,8 @@ import os
 import torch
 from torch import nn
 import cv2
-from typing import Optional, Tuple, List, Union, Callable
-from networks import FBV_SM, PositionalEncoder
-from torch.amp import autocast, GradScaler
+from typing import Optional, Tuple, List
+from torch.amp import autocast
 import torch.nn.functional as F
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
@@ -424,19 +421,27 @@ def prepare_chunks(
     return points
 
 
-def model_forward(
+def self_model_forward(
         config,
-        rays_o: torch.Tensor,
-        rays_d: torch.Tensor,
-        near: float,
-        far: float,
         model: nn.Module,
         arm_angle: torch.Tensor,
-        DOF: int,
-        chunksize: int = 2 ** 15,
-        n_samples: int = 64,
-        output_flag: int = 0
+        output_flag: int = 0,
+        observation_shape=None
 ):
+    config = config.dreamer
+    Camera_FOV = config.selfModel.cameraFOV
+    height, width = observation_shape[1]/4, observation_shape[2]/4
+    camera_angle_y = Camera_FOV * np.pi / 180.
+    focal = 0.5 * height / np.tan(0.5 * camera_angle_y)
+    focal = torch.tensor(focal, dtype=torch.float32, device="cuda")
+
+    rays_o, rays_d = get_rays(int(height), int(width), focal)
+    DOF = config.selfModel.dof
+    cam_dist = config.selfModel.camDist
+    nf_size = config.selfModel.nfSize
+    near, far = cam_dist - nf_size, cam_dist + nf_size  # real scale dist=1.0
+    n_samples = config.selfModel.nSamples
+    chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
 
     return_outputs = True
     if output_flag == 4:  # 4 is mode 0 with latent output, (eze)
@@ -503,7 +508,7 @@ def model_forward(
     # Store outputs.
     latent_state = latent_states.view(B, -1, latent_states.shape[-1]).mean(dim=1)
     if return_outputs:
-        return outputs, latent_state
+        return latent_state, outputs
     else:
         return latent_state
 
@@ -564,97 +569,6 @@ def plot_3d_visual(x, y, z, if_transform=True):
 # ---------------------------------------------------------
 # (eze)
 # ---------------------------------------------------------
-def init_models(d_input, d_filter, pretrained_model_pth=None, lr=5e-4, output_size=2, FLAG_PositionalEncoder = False, return_output=True):
-
-    if FLAG_PositionalEncoder:
-        encoder = PositionalEncoder(d_input, n_freqs=10, log_space=True)
-
-        model = FBV_SM(encoder = encoder,
-                       d_input=d_input,
-                       d_filter=d_filter,
-                       output_size=output_size,
-                       return_output=return_output)
-
-    else:
-        # Models
-        model = FBV_SM(d_input=d_input,
-                       d_filter=d_filter,
-                       output_size=output_size,
-                       return_output=return_output)
-    model.to(device)
-    # Pretrained Model
-    a = True
-    if pretrained_model_pth != None:
-        while(a):
-            try:  # Avoiding Multithreading issues (eze)
-                model.load_state_dict(torch.load(pretrained_model_pth, map_location=torch.device(device)))
-                a = False
-            except:
-                time.sleep(2)
-                a = True
-
-    # Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    return model, optimizer
-
-
-def selfmodelEvalForward(config, observationShape, data, initializeLatents=False, envInteraction=False):  # this function is just for getting the parameters like in the train function and setting modes, (eze)
-    if config.dreamer.selfModel.positionalEncoder:
-        add_name = 'PE'
-    else:
-        add_name = 'no_PE'
-    pretrained_selfModel_pth = "train_log/%s_id%d_(%d)_%s(%s)_%s" % (config.dreamer.selfModel.sim_real, config.robotID, config.seed, add_name, config.dreamer.selfModel.arm_ee, config.runName)
-
-    if envInteraction:
-        return_output = True
-        outputFlag = 0
-    else:
-        outputFlag = 4
-        return_output = False
-
-    if initializeLatents:
-        model, _ = init_models(d_input=(config.dreamer.selfModel.dof - 2) + 3, d_filter=128,
-                                                       output_size=2,
-                                                       FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
-                                                       return_output=return_output)  # SelfModel (already on device), (eze)
-
-        os.makedirs(pretrained_selfModel_pth + "/best_model/", exist_ok=True)
-        torch.save(model.state_dict(), pretrained_selfModel_pth + '/best_model/best_model.pt')
-    else:
-        model, _ = init_models(d_input=(config.dreamer.selfModel.dof - 2) + 3, d_filter=128,
-                                                       pretrained_model_pth=pretrained_selfModel_pth + "/best_model/best_model.pt",
-                                                       output_size=2,
-                                                       FLAG_PositionalEncoder=config.dreamer.selfModel.positionalEncoder,
-                                                       return_output=return_output)  # SelfModel (already on device), (eze)
-        model.eval()
-        config = config.dreamer
-
-        Camera_FOV = config.selfModel.cameraFOV
-        height, width = observationShape[1]/4, observationShape[2]/4
-        camera_angle_y = Camera_FOV * np.pi / 180.
-        focal = 0.5 * height / np.tan(0.5 * camera_angle_y)
-        focal = torch.tensor(focal, dtype=torch.float32, device="cuda")
-
-        rays_o, rays_d = get_rays(int(height), int(width), focal)
-        DOF = config.selfModel.dof
-        cam_dist = config.selfModel.camDist
-        nf_size = config.selfModel.nfSize
-        near, far = cam_dist - nf_size, cam_dist + nf_size  # real scale dist=1.0
-        n_samples = config.selfModel.nSamples
-        chunksize = eval(config.selfModel.chunkSize)  # Modify as needed to fit in GPU memory
-
-        latents = torch.zeros(config.batchSize, config.batchLength-1, config.selfModel.d_filter // 4, device=device)
-
-        if not envInteraction:  # uses batches, (eze)
-            for t in range(config.batchLength-1):
-                latents[:, t] = model_forward(config, rays_o, rays_d, near, far, model, data[:, t], DOF, chunksize=chunksize, n_samples=n_samples, output_flag=outputFlag)
-            #latents = latents.reshape(config.batchSize, -1, latents.shape[-1])
-            return latents
-        else:
-            outputs, latents = model_forward(config, rays_o, rays_d, near, far, model, data, DOF, chunksize, n_samples, output_flag=outputFlag)
-            return latents, outputs['rgb_map']
-
-
 def init_envs(config):
     camMode = config.camMode
     smEnv             = CleanGymWrapper(GymPixelsProcessingWrapper(gym.wrappers.ResizeObservation(AddRenderObservation(gym.make(config.environmentName, render_mode="rgb_array", max_episode_steps=None, camera_name="third_person", forward_reward_weight=0), render_only=True), (64, 64))))
@@ -669,6 +583,9 @@ def init_envs(config):
 
     return smEnv, wmEnv
 
+# ---------------------------------------------------------
+# From original sm Code (no usage here): (eze)
+# ---------------------------------------------------------
 
 if __name__ == "__main__":
 
