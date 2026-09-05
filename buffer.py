@@ -17,7 +17,7 @@ class ReplayBuffer(object):
         self.rewards             = np.empty((self.capacity, 1), dtype=np.float32)
         self.dones               = np.empty((self.capacity, 1), dtype=np.float32)
         self.angles              = np.empty((self.capacity, actions_size), dtype=np.float32)  # actions_size is equivalent to number of angles, (eze)
-        self.vel                 = np.empty((self.capacity, actions_size), dtype=np.float32)
+        #self.vel                 = np.empty((self.capacity, actions_size), dtype=np.float32)
 
         self.bufferIndex = 0
         self.full = False
@@ -25,7 +25,7 @@ class ReplayBuffer(object):
     def __len__(self):
         return self.capacity if self.full else self.bufferIndex
 
-    def add(self, observation, smObservation, action, reward, nextObservation, nextSmObservation, done, angle, vel):
+    def add(self, observation, smObservation, action, reward, nextObservation, nextSmObservation, done, angle):
         self.observations[self.bufferIndex]       = observation
         self.smObservations[self.bufferIndex]     = smObservation
         self.actions[self.bufferIndex]            = action
@@ -34,7 +34,7 @@ class ReplayBuffer(object):
         self.nextSmObservations[self.bufferIndex] = nextSmObservation
         self.dones[self.bufferIndex]              = done
         self.angles[self.bufferIndex]             = angle.cpu()
-        self.vel[self.bufferIndex]                = vel.cpu()
+        #self.vel[self.bufferIndex]                = vel.cpu()
 
         self.bufferIndex = (self.bufferIndex + 1) % self.capacity
         self.full = self.full or self.bufferIndex == 0
@@ -56,7 +56,7 @@ class ReplayBuffer(object):
         rewards  = torch.as_tensor(self.rewards[sampleIndex], device=self.device)
         dones    = torch.as_tensor(self.dones[sampleIndex], device=self.device)
         angles   = torch.as_tensor(self.angles[sampleIndex], device=torch.device(self.device))
-        vel      = torch.as_tensor(self.vel[sampleIndex], device=torch.device(self.device))  # May be redundant in later versions with SM rollouts, (eze)
+        #vel      = torch.as_tensor(self.vel[sampleIndex], device=torch.device(self.device))  # May be redundant in later versions with SM rollouts, (eze)
 
         sample = attridict({
             "observations"      : observations,
@@ -66,8 +66,7 @@ class ReplayBuffer(object):
             "nextObservations"  : nextObservations,
             "nextSmObservations": nextSmObservations,
             "dones"             : dones,
-            "angles"            : angles,
-            "vel"               : vel})
+            "angles"            : angles})
         return sample
 
 

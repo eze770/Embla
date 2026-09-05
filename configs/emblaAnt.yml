@@ -1,5 +1,5 @@
 environmentName: Ant-v5
-runName: SurvivalInstinctRun12
+runName: SurvivalInstinctRun15
 seed: 1
 robotID: 1
 
@@ -46,7 +46,7 @@ dreamer:
     entropyScale: 0.0003
 
     buffer:
-        capacity: 50000
+        capacity: 29000 # original: 50000
 
     encoder: 
         depth: 16
@@ -106,7 +106,7 @@ dreamer:
         nfSize: 0.4
         d_filter: 128
         nIters: 500000
-        chunkSize: 2 ** 14
+        chunkSize: 2 ** 14 # one chunk for current input
         nSamples: 64
         cameraFOV: 45.
         lossGoal: 0.0001

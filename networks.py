@@ -230,6 +230,7 @@ class PositionalEncoder(nn.Module):
 
 class FBV_SM(nn.Module):
     def __init__(self,
+                 config,
                  encoder=None,
                  d_input: int = 5,
                  d_filter: int = 128,
@@ -239,6 +240,8 @@ class FBV_SM(nn.Module):
         self.d_input = d_input
         self.act = nn.functional.relu
         self.encoder = encoder
+        self.config = config
+        self.d_filter = d_filter
 
         # Initialize layers
         if self.encoder ==None:
@@ -283,7 +286,6 @@ class FBV_SM(nn.Module):
         else:
             x_pos = self.pos_encoder(x[:,:3])
             x_cmd = self.cmd_encoder(x[:,3:])
-            x = self.feed_forward(torch.cat((x_pos, x_cmd,x), dim=1))
-
-        return self.output(x), x.mean(dim=0, keepdim=True).detach()  # x = latent, (eze)
+            x = self.feed_forward(torch.cat((x_pos, x_cmd,x), dim=1,))
+        return self.output(x), x.detach()  # x = latent, (eze)
 

@@ -26,7 +26,8 @@ class Dreamer:
         self.config             = config
         self.configFile         = configFile
         self.device             = device
-        self.frameQueue         = queue.Queue()
+        self.smFrameQueue       = queue.Queue(maxsize=2)
+        self.wmFrameQueue       = queue.Queue(maxsize=2)
 
         self.recurrentSize  = config.recurrentSize
         self.latentSize     = config.latentLength*config.latentClasses
@@ -46,7 +47,7 @@ class Dreamer:
             encoder = PositionalEncoder(d_input=(config.selfModel.dof - 2) + 3, n_freqs=10, log_space=True                                                                   ).to(self.device)
         else:
             encoder = None
-        self.selfModel                         = FBV_SM(encoder=encoder, d_input=(config.selfModel.dof - 2) + 3, d_filter=config.selfModel.d_filter, output_size=2           ).to(self.device)
+        self.selfModel                         = FBV_SM(config=config, encoder=encoder, d_input=(config.selfModel.dof - 2) + 3, d_filter=config.selfModel.d_filter, output_size=2           ).to(self.device)
         self.filmLayer                         = FiLMLayer(self.fullStateSize                                                                                                ).to(self.device)
         #self.smAuxDecoder                     = SmAuxiliaryDecoder(self.fullStateSize, self.smLatentSize                                                                    ).to(self.device)
 
@@ -155,9 +156,9 @@ class Dreamer:
 
         # 0:OM, 1:OneOut, 2: OneOut with distance
         different_arch = 0
-        np.random.seed(seed_num)
-        random.seed(seed_num)
-        torch.manual_seed(seed_num)
+        #np.random.seed(seed_num)
+        #random.seed(seed_num)
+        #torch.manual_seed(seed_num)
         DOF = config.dreamer.selfModel.dof  # the number of motors  # dof4 apr03
         Flag_save_image_during_training = True
 
@@ -212,8 +213,7 @@ class Dreamer:
             optimizer = self.selfModelOptimizer
 
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.1, patience=20, verbose=True)
-            latents = torch.zeros(batchSize, batchLength - 1, config.selfModel.d_filter // 4,
-                                  device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
+            latents = torch.zeros(batchSize, batchLength - 1, config.selfModel.d_filter // 4, device=device)  # batchLength -1 because WM ignores first fullstate, (eze)
 
             for t in range(batchLength - 1):
                 one = time.time()
@@ -238,13 +238,12 @@ class Dreamer:
 
                 # Run one iteration of TinyNeRF and get the rendered RGB image.
                 with autocast("cuda"):
-                    latents, outputs = self_model_forward(config=self.configFile,
+                    latents[:, t], outputs = self_model_forward(config=self.configFile,
                                                                 model=model,
                                                                 arm_angle=angles,
                                                                 output_flag=different_arch,
                                                                 observation_shape=self.observationShape)
                 two = time.time()
-                print(latents.shape)
                 rgb_predicted = outputs['rgb_map']
                 if train:
                     # Backprop!
@@ -383,7 +382,7 @@ class Dreamer:
 
 
     @torch.no_grad()
-    def environmentInteraction(self, wmEnv, smEnv, numEpisodes, seed=None, evaluation=False, saveVideo=False, liveView=False, filename="videos/unnamedVideo", fps=30, macroBlockSize=16):
+    def environmentInteraction(self, wmEnv, smEnv, numEpisodes, seed=None, evaluation=False, saveVideo=False, liveView=False, dreamerLiveView=False, filename="videos/unnamedVideo", fps=30, macroBlockSize=16):
         scores = []
         overalMovement = 0
         overalMovements = numpy.zeros(8)
@@ -402,13 +401,12 @@ class Dreamer:
             currentScore, stepCount, done, frames = 0, 0, False, []
             modelLock = threading.Lock()
             while not done:
-                with torch.no_grad():
-                    with modelLock:
-                        smLatentState, smPrediction = self_model_forward(config=self.configFile, model=self.selfModel.eval(), arm_angle=angles, output_flag=0, observation_shape=self.observationShape)
-                        smPrediction = smPrediction['rgb_map']
-                        target_img = crop_center(torch.from_numpy(smObservation).unsqueeze(0)).mean(dim=-1 if smObservation.shape[-1] in (1, 3) else 1).to(device).reshape(1, -1)
-                    with autocast("cuda"):
-                        sm_loss = torch.nn.functional.mse_loss(smPrediction, target_img)
+                with modelLock:
+                    smLatentState, smPrediction = self_model_forward(config=self.configFile, model=self.selfModel.eval(), arm_angle=angles, output_flag=0, observation_shape=self.observationShape)
+                    smPrediction = smPrediction['rgb_map']
+                    target_img = crop_center(torch.from_numpy(smObservation).unsqueeze(0)).mean(dim=-1 if smObservation.shape[-1] in (1, 3) else 1).to(device).reshape(1, -1)
+                with autocast("cuda"):
+                    sm_loss = torch.nn.functional.mse_loss(smPrediction, target_img)
                 #print("smLatentStateSize: ", smLatentState.size(), "recurrentStateSize: ", recurrentState.size(), "latentStateSize: ", latentState.size())  # debuging, (eze)
                 recurrentState                  = self.recurrentModel(recurrentState, latentState, action)
                 latentState, _                  = self.posteriorNet(torch.cat((recurrentState, encodedObservation.view(1, -1)), -1))
@@ -437,6 +435,7 @@ class Dreamer:
                 reward -= abs((800 - energy) * 0.005)  # small penalty for too much or too little energy (eze)
 
                 l = 0
+                movePenalty = 0
                 for j in actionNumpy:  # Penalty for using one part too often (eze)
                     overalMovement += abs(j)
                     overalMovements[l] += abs(j)
@@ -448,15 +447,16 @@ class Dreamer:
                 # Penalty for bad Vision/ too much angle of central body-part (eze)
                 _, x, y, _ = envtype.unwrapped.data.qpos[3:7]  # (w, x, y, z) (eze)
                 up_z = 1 - 2 * (x ** 2 + y ** 2)
-                if not up_z < 0.5:
-                    reward -= abs(up_z * 2)
+                up_z_pen = 0
+                if up_z < 0.5:
+                    reward -= abs((1 - up_z) * 2)
                     up_z_pen = up_z
 
-                print("Overall: ", reward, "   Energy: ", energy, "   MovementDist: ", movePenalty, "   Vision: ", up_z_pen)
+                if stepCount % 10 == 0:
+                    print("Overall: ", reward, "   Energy: ", energy, "   MovementDist: ", movePenalty, "   Vision: ", up_z_pen)
                 angles = torch.as_tensor(smEnv.unwrapped.data.qpos.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # qpos from documentation, (eze)
-                vel = torch.as_tensor(smEnv.unwrapped.data.qvel.copy()[:self.config.selfModel.dof], device=self.device, dtype=torch.float32)  # only used in Dreams, (eze)
                 if not evaluation:
-                    self.buffer.add(wmObservation, smObservation, actionNumpy, reward, nextWmObservation, nextObservation, done, angles, vel)
+                    self.buffer.add(wmObservation, smObservation, actionNumpy, reward, nextWmObservation, nextObservation, done, angles)
 
                 if saveVideo and i == 0:
                     frame = smEnv.render()
@@ -467,7 +467,12 @@ class Dreamer:
                 if liveView and i == 0:
                     frame = smEnv.render()
                     frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                    self.frameQueue.put(frame_bgr)
+                    self.smFrameQueue.put(frame_bgr)
+
+                if dreamerLiveView and i == 0:
+                    frame = wmEnv.render()
+                    frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    self.wmFrameQueue.put(frame_bgr)
 
                 encodedObservation = self.encoder(torch.from_numpy(nextWmObservation).float().unsqueeze(0).to(self.device))
                 angles = angles.unsqueeze(0)

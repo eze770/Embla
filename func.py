@@ -471,8 +471,7 @@ def self_model_forward(
     batches = prepare_chunks(model_input, chunksize=chunksize)
 
     predictions = torch.zeros(len(batches), batches[0].shape[0], 2, device=device)
-    latent_states = torch.zeros(len(batches), config.selfModel.d_filter//4, device=device)
-
+    latent_states = torch.zeros(len(batches), batches[0].shape[0], config.selfModel.d_filter//4, device=device)
     with autocast("cuda"):
         c = 0
         for batch in batches:
@@ -481,7 +480,7 @@ def self_model_forward(
                 predictions[c] = prediction
             else:
                 latent_state = model(batch)
-            latent_states[c] = latent_state[0]
+            latent_states[c] = latent_state
             del batch
             c += 1
 
